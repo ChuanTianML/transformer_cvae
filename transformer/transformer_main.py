@@ -63,6 +63,7 @@ PARAMS_MAP = {
 
 DEFAULT_TRAIN_EPOCHS = 10
 INF = int(1e9)
+NEAR_ZERO = 1e-9
 BLEU_DIR = "bleu"
 
 # Dictionary containing tensors that are logged by the logging hooks. Each item
@@ -134,17 +135,30 @@ def model_fn(features, labels, mode, params):
     # 2.then average in batch by sample.
 
     if train: # train mode
-      kl_loss = gaussian_kld(recog_mu, recog_logvar, prior_mu, prior_logvar) 
+      # if use gaussian_kld_v2, the meaning of 'logvar' becomes standard deviation.
+      if params["use_std"]:
+        kl_loss = gaussian_kld_v2(recog_mu, recog_logvar, prior_mu, prior_logvar) 
+      else:
+        kl_loss = gaussian_kld(recog_mu, recog_logvar, prior_mu, prior_logvar) 
+
       kl_loss = tf.reduce_sum(kl_loss) / real_batch_size
       tf.identity(kl_loss, "kl_loss")
       # annealing
-      kl_loss_weights = tf.minimum((tf.to_float(tf.train.get_or_create_global_step()) / params["full_kl_steps"]), 1.0)
-      weighted_kl_loss = kl_loss * kl_loss_weights
+      #kl_loss_weights = tf.minimum((tf.to_float(tf.train.get_or_create_global_step()) / params["full_kl_steps"]), 1.0) # linear weight
+      if params["use_kl_weight"]:
+        scaled_x = (tf.to_float(tf.train.get_or_create_global_step()) / params["full_kl_steps"] - 0.5) * 10.0             # sigmoid weight
+        kl_loss_weight = 1.0 / (1 + tf.exp(-scaled_x))
+      else:
+        kl_loss_weight = 1.0
+
+      weighted_kl_loss = kl_loss * kl_loss_weight
       tf.identity(weighted_kl_loss, "weighted_kl_loss")
+      tf.identity(kl_loss_weight, "kl_loss_weight")
       if params["use_bow"]:
         bow_loss = compute_bow_loss(latent_sample, targets, params, train)
         loss = predict_loss + weighted_kl_loss + bow_loss
         tf.identity(bow_loss, "bow_loss") # total loss
+        #TENSORS_TO_LOG["bow_loss"] = "model/bow_loss"
       else:
         loss = predict_loss + weighted_kl_loss
     else: # eval and infer modes
@@ -172,11 +186,14 @@ def model_fn(features, labels, mode, params):
 
       # Epochs can be quite long. This gives some intermediate information
       # in TensorBoard.
-      metric_dict["minibatch_loss"] = loss
+      #metric_dict["minibatch_loss"] = loss
       metric_dict["predict_loss"] = predict_loss
       metric_dict["kl_loss"] = kl_loss
-      metric_dict["bow_loss"] = bow_loss
-      metric_dict["weighted_kl_loss"] = weighted_kl_loss
+      if params["use_bow"]:
+        metric_dict["bow_loss"] = bow_loss
+      if params["use_kl_weight"]:
+        metric_dict["weighted_kl_loss"] = weighted_kl_loss
+        metric_dict["kl_loss_weight"] = kl_loss_weight
 
       if params["use_tpu"]:
         return tf.contrib.tpu.TPUEstimatorSpec(
@@ -225,6 +242,20 @@ def compute_bow_loss(latent_sample, targets, params, train):
     bow_predict_loss = tf.reduce_sum(predict_loss_avg_in_sentence) / real_batch_size
 
     return bow_predict_loss
+
+def gaussian_kld_v2(recog_mu, recog_std, prior_mu, prior_std):
+  """ KL[N(mu1, var1) || N(mu2, var2)]
+    Args:
+        mu1, log_var1, mu2, log_var2: size [batch_size, hidden_size]
+    Return: size with [batch_size, hidden_size]
+  """
+  #recog_std += NEAR_ZERO
+  #prior_std += NEAR_ZERO
+  kld = -0.5 * tf.reduce_sum(1 + 2 * tf.log(recog_std / prior_std)
+                               - tf.div(tf.pow(prior_mu - recog_mu, 2), prior_std * prior_std)
+                               - tf.div(recog_std * recog_std, prior_std * prior_std),
+                             reduction_indices=-1)
+  return kld
 
 
 def gaussian_kld(recog_mu, recog_logvar, prior_mu, prior_logvar):
@@ -675,17 +706,15 @@ def run_transformer(flags_obj):
     params["batch_size"] = distribution_utils.per_device_batch_size(
         params["batch_size"], num_gpus)
 
-  if not params["use_bow"]:
-    TENSORS_TO_LOG.pop("bow_loss")
-
   # debug
-  print('debug: train_steps', flags_obj.train_steps)
-  print('debug: train_epochs', flags_obj.train_epochs)
-  print('debug: epochs_between_evals', flags_obj.epochs_between_evals)
-  print('debug: steps_between_evals', flags_obj.steps_between_evals)
-  print('debug: flags_obj.batch_size', flags_obj.batch_size)
-  print('debug: batch_size', params['batch_size'])
-  #exit()
+  if False:
+    print('debug: train_steps', flags_obj.train_steps)
+    print('debug: train_epochs', flags_obj.train_epochs)
+    print('debug: epochs_between_evals', flags_obj.epochs_between_evals)
+    print('debug: steps_between_evals', flags_obj.steps_between_evals)
+    print('debug: flags_obj.batch_size', flags_obj.batch_size)
+    print('debug: batch_size', params['batch_size'])
+    #exit()
 
   schedule_manager = schedule.Manager(
       train_steps=flags_obj.train_steps,
@@ -704,6 +733,9 @@ def run_transformer(flags_obj):
   params["repeat_dataset"] = schedule_manager.repeat_dataset
 
   model_helpers.apply_clean(flags.FLAGS)
+
+  if not params["use_bow"]:
+    TENSORS_TO_LOG.pop("bow_loss")
 
   # Create hooks that log information about the training and metric values
   train_hooks = hooks_helper.get_train_hooks(

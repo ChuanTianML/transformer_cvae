@@ -421,6 +421,12 @@ class LatentVariableLayer(tf.layers.Layer):
     self.train = train
     #output_hidden_size = 2 * params["hidden_size"] # use hidden_size as latent_size
     output_hidden_size = 2 * params["latent_size"]
+    self.norm = True
+    self.drop = True
+    self.residual = False
+    if params["use_std"]:
+      self.residual = True
+    self.params = params
 
     self.prior_ffl = ffn_layer.FeedFowardNetwork(
         params["hidden_size"], params["filter_size"],
@@ -431,8 +437,13 @@ class LatentVariableLayer(tf.layers.Layer):
         self.prior_ffl, params, train,
         input_hidden_size = params["hidden_size"],
         output_hidden_size = output_hidden_size,
-        norm=True, drop=True, residual=False) 
+        norm=self.norm, drop=self.drop, residual=self.residual) 
         #norm=True, drop=False, residual=False) 
+    if self.params["use_std"]:
+        self.prior_mu_layer = tf.layers.Dense(
+            params["latent_size"], use_bias=False, activation=tf.tanh, name="mu_layer")
+        self.prior_std_layer = tf.layers.Dense(
+            params["latent_size"], use_bias=False, activation=tf.sigmoid, name="std_layer")
 
     if self.train:
       input_hidden_size =  2 * params["hidden_size"]
@@ -445,7 +456,13 @@ class LatentVariableLayer(tf.layers.Layer):
           self.recog_ffl, params, train,
           input_hidden_size = input_hidden_size,
           output_hidden_size = output_hidden_size,
-          norm=True, drop=False, residual=False) 
+          norm=self.norm, drop=self.drop, residual=self.residual) 
+          #norm=True, drop=False, residual=False) 
+      if self.params["use_std"]:
+          self.recog_mu_layer = tf.layers.Dense(
+              params["latent_size"], use_bias=False, activation=tf.tanh, name="mu_layer")
+          self.recog_std_layer = tf.layers.Dense(
+              params["latent_size"], use_bias=False, activation=tf.sigmoid, name="std_layer")
 
   def __call__(self, src_embedding, tgt_embedding):
 
@@ -454,7 +471,16 @@ class LatentVariableLayer(tf.layers.Layer):
       prior_mu_logvar = self.prior_ffl(src_embedding_expd, padding=None) # get size [batch_size, 1, 2*latent_size]
       prior_mu_logvar = tf.squeeze(prior_mu_logvar, axis = 1) # get size [batch_size, 2 * latent_size]
       prior_mu, prior_logvar = tf.split(prior_mu_logvar, 2, axis = -1) # both with size [batch_size, latent_size]
-      latent_sample = self._sample_gaussian(prior_mu, prior_logvar) # get size [batch_size, latent_size]
+      if self.params["use_std"]:
+        # if use sample_gaussian_v2, the meaning of 'logvar' becomes standard deviation.
+        # and need make sure std > 0
+        with tf.variable_scope("std"):
+          prior_logvar = self.prior_std_layer(prior_logvar) * 2.0 # multiply 2.0 for one-center
+        with tf.variable_scope("mu"):
+          prior_mu = self.prior_mu_layer(prior_mu)
+        latent_sample = self._sample_gaussian_v2(prior_mu, prior_logvar) # get size [batch_size, latent_size]
+      else:
+        latent_sample = self._sample_gaussian(prior_mu, prior_logvar) # get size [batch_size, latent_size]
       recog_mu, recog_logvar = None, None
 
     with tf.variable_scope("recog"):
@@ -464,7 +490,17 @@ class LatentVariableLayer(tf.layers.Layer):
         recog_mu_logvar = self.recog_ffl(src_tgt_embedding, padding=None) # get size [batch_size, 1, 2*latent_size]
         recog_mu_logvar = tf.squeeze(recog_mu_logvar, axis = 1) # get size [batch_size, 2*latent_size]
         recog_mu, recog_logvar = tf.split(recog_mu_logvar, 2, axis = -1) # both with size [batch_size, latent_size]
-        latent_sample = self._sample_gaussian(recog_mu, recog_logvar) # get size [batch_size, latent_size]
+        # if use sample_gaussian_v2, the meaning of 'logvar' becomes standard deviation.
+        if self.params["use_std"]:
+          # if use sample_gaussian_v2, the meaning of 'logvar' becomes standard deviation.
+          # and need make sure std > 0
+          with tf.variable_scope("std"):
+            recog_logvar = self.recog_std_layer(recog_logvar) * 2.0
+          with tf.variable_scope("mu"):
+            recog_mu = self.recog_mu_layer(recog_mu)
+          latent_sample = self._sample_gaussian_v2(recog_mu, recog_logvar) # get size [batch_size, latent_size]
+        else:
+          latent_sample = self._sample_gaussian(recog_mu, recog_logvar) # get size [batch_size, latent_size]
 
     return latent_sample, prior_mu, prior_logvar, recog_mu, recog_logvar
 
@@ -481,6 +517,17 @@ class LatentVariableLayer(tf.layers.Layer):
     z = mu + tf.multiply(std, epsilon)
     return z
 
+  def _sample_gaussian_v2(self, mu, std):
+    """
+      Args: 
+        mu:     size [batch_size, latent_size]
+        std:    size [batch_size, latent_size]
+      Return:
+        z: latent_variable, size [batch_size, latent_size]
+    """
+    epsilon = tf.random_normal(tf.shape(std), name="epsilon")
+    z = mu + tf.multiply(std, epsilon)
+    return z
 
 
 class PrePostProcessingWrapper(object):

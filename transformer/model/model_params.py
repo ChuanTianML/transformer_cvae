@@ -65,9 +65,11 @@ BASE_PARAMS = defaultdict(
 
     # tc add
     # weighting kl loss
-    full_kl_steps=int(3e4), 
+    full_kl_steps=int(1e4), 
+    use_kl_weight=True,
     use_bow=True,
-    latent_size=256,
+    latent_size=128,
+    use_std=False,
 )
 
 BIG_PARAMS = BASE_PARAMS.copy()
