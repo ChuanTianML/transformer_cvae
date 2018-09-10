@@ -66,10 +66,10 @@ BASE_PARAMS = defaultdict(
     # tc add
     # weighting kl loss
     full_kl_steps=int(1e4), 
-    use_kl_weight=True,
+    kl_weight='sigmoid',
     use_bow=True,
     latent_size=128,
-    use_std=False,
+    use_std=True,
 )
 
 BIG_PARAMS = BASE_PARAMS.copy()
@@ -90,6 +90,13 @@ BIG_PARAMS.update(
     filter_size=4096,
 
     num_heads=16,
+
+    # tc added
+    kl_weight='sigmoid',
+    full_kl_steps=int(1e5), 
+    latent_size=1024,
+    use_bow=True,
+    use_std=False,
 )
 
 # Parameters for running the model in multi gpu. These should not change the

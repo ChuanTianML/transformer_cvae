@@ -144,10 +144,11 @@ def model_fn(features, labels, mode, params):
       kl_loss = tf.reduce_sum(kl_loss) / real_batch_size
       tf.identity(kl_loss, "kl_loss")
       # annealing
-      #kl_loss_weights = tf.minimum((tf.to_float(tf.train.get_or_create_global_step()) / params["full_kl_steps"]), 1.0) # linear weight
-      if params["use_kl_weight"]:
-        scaled_x = (tf.to_float(tf.train.get_or_create_global_step()) / params["full_kl_steps"] - 0.5) * 10.0             # sigmoid weight
+      if params["kl_weight"] == 'sigmoid':
+        scaled_x = (tf.to_float(tf.train.get_or_create_global_step()) / params["full_kl_steps"] - 0.5) * 20.0             # sigmoid weight
         kl_loss_weight = 1.0 / (1 + tf.exp(-scaled_x))
+      elif params["kl_weight"] == 'linear':
+        kl_loss_weights = tf.minimum((tf.to_float(tf.train.get_or_create_global_step()) / params["full_kl_steps"]), 1.0)  # linear weight
       else:
         kl_loss_weight = 1.0
 
