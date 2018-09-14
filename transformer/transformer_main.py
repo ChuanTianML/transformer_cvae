@@ -40,6 +40,7 @@ from official.transformer import translate
 from official.transformer.model import model_params
 from official.transformer.model import transformer
 from official.transformer.model import transformer2
+from official.transformer.model import transformer3
 from official.transformer.utils import dataset
 from official.transformer.utils import metrics
 from official.transformer.utils import schedule
@@ -87,7 +88,8 @@ def model_fn(features, labels, mode, params):
     # Create model and get output logits.
     train = (mode == tf.estimator.ModeKeys.TRAIN)
     #model = transformer.Transformer(params, train)
-    model = transformer2.Transformer(params, train)
+    #model = transformer2.Transformer(params, train)
+    model = transformer3.Transformer(params, train)
 
     logits, latent_sample, prior_mu, prior_logvar, recog_mu, recog_logvar = model(inputs, targets)
     # debug
@@ -129,10 +131,13 @@ def model_fn(features, labels, mode, params):
 
     real_batch_size = tf.to_float(tf.shape(logits)[0]) # get batch_size
 
-    predict_loss_avg_in_sentence = tf.reduce_sum(xentropy, axis=1) / tf.reduce_sum(weights, axis=1)
-    predict_loss = tf.reduce_sum(predict_loss_avg_in_sentence) / real_batch_size
-    # 1.first average in sentence by word;
-    # 2.then average in batch by sample.
+    if params["word_avg"]:
+      predict_loss_avg_in_sentence = tf.reduce_sum(xentropy, axis=1) / tf.reduce_sum(weights, axis=1)
+      predict_loss = tf.reduce_sum(predict_loss_avg_in_sentence) / real_batch_size
+      # 1.first average in sentence by word;
+      # 2.then average in batch by sample.
+    else:
+      predict_loss = tf.reduce_sum(xentropy) / real_batch_size
 
     if train: # train mode
       # if use gaussian_kld_v2, the meaning of 'logvar' becomes standard deviation.
@@ -140,7 +145,6 @@ def model_fn(features, labels, mode, params):
         kl_loss = gaussian_kld_v2(recog_mu, recog_logvar, prior_mu, prior_logvar) 
       else:
         kl_loss = gaussian_kld(recog_mu, recog_logvar, prior_mu, prior_logvar) 
-
       kl_loss = tf.reduce_sum(kl_loss) / real_batch_size
       tf.identity(kl_loss, "kl_loss")
       # annealing
@@ -192,7 +196,7 @@ def model_fn(features, labels, mode, params):
       metric_dict["kl_loss"] = kl_loss
       if params["use_bow"]:
         metric_dict["bow_loss"] = bow_loss
-      if params["use_kl_weight"]:
+      if params["kl_weight"]:
         metric_dict["weighted_kl_loss"] = weighted_kl_loss
         metric_dict["kl_loss_weight"] = kl_loss_weight
 
@@ -239,8 +243,11 @@ def compute_bow_loss(latent_sample, targets, params, train):
 
     # average first in sentence, then in batch
     real_batch_size = tf.to_float(tf.shape(targets)[0]) # get batch_size
-    predict_loss_avg_in_sentence = tf.reduce_sum(xentropy, axis=1) / tf.reduce_sum(weights, axis=1)
-    bow_predict_loss = tf.reduce_sum(predict_loss_avg_in_sentence) / real_batch_size
+    if params["word_avg"]:
+      predict_loss_avg_in_sentence = tf.reduce_sum(xentropy, axis=1) / tf.reduce_sum(weights, axis=1)
+      bow_predict_loss = tf.reduce_sum(predict_loss_avg_in_sentence) / real_batch_size
+    else:
+      bow_predict_loss = tf.reduce_sum(xentropy) / real_batch_size
 
     return bow_predict_loss
 
@@ -708,7 +715,7 @@ def run_transformer(flags_obj):
         params["batch_size"], num_gpus)
 
   # debug
-  if False:
+  if True:
     print('debug: train_steps', flags_obj.train_steps)
     print('debug: train_epochs', flags_obj.train_epochs)
     print('debug: epochs_between_evals', flags_obj.epochs_between_evals)

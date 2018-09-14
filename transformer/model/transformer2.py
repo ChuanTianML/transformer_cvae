@@ -345,7 +345,9 @@ class SentenceEmbeddingLayer(tf.layers.Layer):
     self.sent_attention_layer = ffn_layer.FeedFowardNetwork( # 2 sub-layers, one is feedfoward with activation, another is linear
         params["hidden_size"], params["hidden_size"],
         params["relu_dropout"], train, params["allow_ffn_pad"],
-        output_size = 1, activation=tf.nn.relu)
+        output_size = 1, activation=tf.nn.relu,
+        #use_bias_output=True)
+        use_bias_output=False)
         #output_size = 1, activation=tf.nn.tanh)
     self.sent_attention_layer = PrePostProcessingWrapper(
         self.sent_attention_layer, params, train,
@@ -361,18 +363,22 @@ class SentenceEmbeddingLayer(tf.layers.Layer):
             inputs_padding: size with [batch_size, input_length], 1 for padding, 0 for non-padding
         return: size with [batch_size, hidden_size]
     """
-    with tf.name_scope("sentence_embedding"):
-      with tf.name_scope("attention"):
+    #with tf.name_scope("sentence_embedding"):
+    with tf.variable_scope("sentence_embedding"):
+      #with tf.variable_scope("attention"):
+      with tf.variable_scope("attention"):
         logits = self.sent_attention_layer(inputs, inputs_padding) # get size [batch_size, length, 1]
 
       # do masking before softmax
-      with tf.name_scope("mask"):
+      #with tf.name_scope("mask"):
+      with tf.variable_scope("mask"):
         mask_condition = inputs_padding < 1e-9 # get size [batch_size, lenght] False for padding, True for non-padding
         mask_condition = tf.expand_dims(mask_condition, axis = -1) 
         mask_values = tf.ones_like(logits) * _NEG_INF # get size [batch_size, length, 1]
         logits = tf.where(mask_condition, logits, mask_values)
 
-      with tf.name_scope("weighted_sum"):
+      #with tf.name_scope("weighted_sum"):
+      with tf.variable_scope("weighted_sum"):
         sent_attention = tf.nn.softmax(logits, axis=1) # softmax, still with size [batch_size, length, 1]
         sent_embedding = tf.reduce_sum(inputs * sent_attention, axis=1) # use attention, get size with [batch_size, hidden_size]
 
@@ -409,7 +415,7 @@ class EncoderOutputLayer(tf.layers.Layer):
         inputs: size with [batch_size, length, 2*hidden_size]
         return: size with [batch_size, length, hidden_size]
     """
-    with tf.name_scope("encoder_output_layer"):
+    with tf.variable_scope("encoder_output_layer"):
       inputs_padding = model_utils.get_padding(inputs)
       outputs = self.feed_foward_layer(inputs, padding=inputs_padding)
       return self.output_norm_layer(outputs)

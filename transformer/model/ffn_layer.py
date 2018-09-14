@@ -24,7 +24,7 @@ import tensorflow as tf
 class FeedFowardNetwork(tf.layers.Layer):
   """Fully connected feedforward network."""
 
-  def __init__(self, hidden_size, filter_size, relu_dropout, train, allow_pad, output_size=None, activation=tf.nn.relu):
+  def __init__(self, hidden_size, filter_size, relu_dropout, train, allow_pad, output_size=None, activation=tf.nn.relu, use_bias_filter=True, use_bias_output=True):
     super(FeedFowardNetwork, self).__init__()
     self.hidden_size = hidden_size
     self.filter_size = filter_size
@@ -37,9 +37,9 @@ class FeedFowardNetwork(tf.layers.Layer):
     self.allow_pad = allow_pad
 
     self.filter_dense_layer = tf.layers.Dense(
-        filter_size, use_bias=True, activation=activation, name="filter_layer")
+        filter_size, use_bias=use_bias_filter, activation=activation, name="filter_layer")
     self.output_dense_layer = tf.layers.Dense(
-        self.output_size, use_bias=True, name="output_layer")
+        self.output_size, use_bias=use_bias_output, name="output_layer")
 
   def call(self, x, padding=None):
     """Return outputs of the feedforward network.
