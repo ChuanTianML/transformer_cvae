@@ -75,7 +75,8 @@ BASE_PARAMS = defaultdict(
 BIG_PARAMS = BASE_PARAMS.copy()
 BIG_PARAMS.update(
     #default_batch_size=128,
-    default_batch_size=2048,
+    default_batch_size=1024,
+    #default_batch_size=2048,
     #default_batch_size=4096,
 
     # default batch size is smaller than for BASE_PARAMS due to memory limits.
@@ -93,10 +94,14 @@ BIG_PARAMS.update(
 
     # tc added
     kl_weight='sigmoid',
-    full_kl_steps=int(1e5), 
+    full_kl_steps=int(1e4), 
     latent_size=1024,
-    use_bow=True,
+    #use_bow=False, # tc doesn't like this
     use_std=False,
+    word_avg=False,
+    num_latent_layers=1,
+    avg_method='word',
+    use_standard_norm=True,
 )
 
 # Parameters for running the model in multi gpu. These should not change the
